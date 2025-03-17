@@ -1,0 +1,21 @@
+{
+  "name": "ts-go",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "cd test & esno ../src/main.ts "
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0"
+  },
+  "dependencies": {
+    "esno": "^4.8.0",
+    "ts-morph": "^25.0.1"
+  }
+}
