@@ -1,13 +1,15 @@
 import {
-    BinaryExpression, Block, CallExpression,
+    BinaryExpression,
+    Block,
+    CallExpression,
     Expression,
     FunctionDeclaration,
     Node,
-    NodeFlags, ParameterDeclaration,
+    ParameterDeclaration,
     Project,
     Statement,
-    ts,
-    Type, VariableDeclarationKind,
+    Type,
+    VariableDeclarationKind,
     VariableStatement
 } from "ts-morph";
 import fs from 'node:fs'
@@ -25,7 +27,7 @@ project.addSourceFilesAtPaths("../test/**/*.ts");
 project.getSourceFiles().forEach(sourceFile => {
     let res = '';
     sourceFile.getStatements().forEach(statement => {
-        res += parseStatement(statement).code;
+        res += parseStatement(statement).code + '\n';
     })
     console.log('sss', res)
     fs.writeFileSync(sourceFile.getDirectory().getPath() + `/${sourceFile.getBaseNameWithoutExtension()}.go`, res)
@@ -93,6 +95,7 @@ function parseExpression(expression?: Expression): CodeResult {
 }
 
 function parseCallExpression(expression: CallExpression) {
+    console.log('expression', expression.getText());
     return {
         code: expression.getText()
     }
@@ -113,7 +116,7 @@ function parseFunctionDeclaration(node: FunctionDeclaration) {
     const args = parameters.map(p => parseParameter(p).code).join(',');
     const body = parseBody(node.getBody())
     return {
-        code: `fun ${node.getName()}(${args})${body}`
+        code: `fun ${node.getName()}(${args})${body.code}`
     }
 }
 
@@ -136,9 +139,7 @@ function parseBody(body: Node | undefined) {
 
 function parseBlock(block: Block): CodeResult {
     return {
-        code: block.getStatements().map(s => {
-            return parseStatement(s).code;
-        }).join(';')
+        code: `{\n${block.getStatements().map(s => parseStatement(s).code).join(';')}\n}`
     }
 }
 
