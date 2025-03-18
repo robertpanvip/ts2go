@@ -1,5 +1,4 @@
 let a = 123;
-
 function test() {
     console.log(a)
 }

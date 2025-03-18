@@ -1,5 +1,6 @@
+package main
 var a int64=123;
-fun test(){
+func Test(){
 console.log(a)
 }
 

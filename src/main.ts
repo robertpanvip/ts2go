@@ -3,11 +3,11 @@ import {
     Block,
     CallExpression,
     Expression,
-    FunctionDeclaration,
+    FunctionDeclaration, FunctionExpression,
     Node,
     ParameterDeclaration,
-    Project,
-    Statement,
+    Project, PropertyAccessExpression,
+    Statement, SyntaxKind,
     Type,
     VariableDeclarationKind,
     VariableStatement
@@ -25,7 +25,7 @@ const project = new Project();
 project.addSourceFilesAtPaths("../test/**/*.ts");
 
 project.getSourceFiles().forEach(sourceFile => {
-    let res = '';
+    let res = 'package main\n';
     sourceFile.getStatements().forEach(statement => {
         res += parseStatement(statement).code + '\n';
     })
@@ -90,18 +90,36 @@ function parseExpression(expression?: Expression): CodeResult {
         }
     } else if (Node.isCallExpression(expression)) {
         return parseCallExpression(expression);
+    } else if (Node.isPropertyAccessExpression(expression)) {
+        return parsePropertyAccessExpression(expression)
+    } else if (Node.isFunctionExpression(expression)) {
+        return parseFunction(expression)
     }
     return {code: ''}
 }
 
+function parsePropertyAccessExpression(expression: PropertyAccessExpression) {
+    //todo
+    return {code: expression.getText()}
+}
+
 function parseCallExpression(expression: CallExpression) {
     console.log('expression', expression.getText());
+    const callee = expression.getExpression();
+    if (Node.isPropertyAccessExpression(callee)) {
+
+        const object = callee.getExpression();
+        //const property = callee.getName();
+        console.log(object.getText())
+    }
     return {
         code: expression.getText()
     }
 }
 
 function parseBinaryExpression(expression: BinaryExpression) {
+    console.log('left', Node.isPropertyAccessExpression(expression.getLeft()), expression.getLeft().getText(), expression.getRight().getText())
+
     const left = parseExpression(expression.getLeft());
     const right = parseExpression(expression.getRight());
     const op = expression.getOperatorToken()
@@ -110,14 +128,20 @@ function parseBinaryExpression(expression: BinaryExpression) {
     }
 }
 
-
-function parseFunctionDeclaration(node: FunctionDeclaration) {
+function parseFunction(node: FunctionExpression | FunctionDeclaration) {
     const parameters = node.getParameters();
     const args = parameters.map(p => parseParameter(p).code).join(',');
-    const body = parseBody(node.getBody())
+    const body = parseBody(node.getBody());
+    const name = node.getName() || "";
+    const exported = isFunctionExported(node);
+
     return {
-        code: `fun ${node.getName()}(${args})${body.code}`
+        code: `func ${exported ? capitalizeFirstLetter(name) : name}(${args})${body.code}`
     }
+}
+
+function parseFunctionDeclaration(node: FunctionDeclaration) {
+    return parseFunction(node)
 }
 
 function parseParameter(arg: ParameterDeclaration) {
@@ -139,7 +163,7 @@ function parseBody(body: Node | undefined) {
 
 function parseBlock(block: Block): CodeResult {
     return {
-        code: `{\n${block.getStatements().map(s => parseStatement(s).code).join(';')}\n}`
+        code: `{\n${block.getStatements().map(s => parseStatement(s).code).join('')}\n}`
     }
 }
 
@@ -161,4 +185,57 @@ function parseType(type: Type) {
         return 'int64'
     }
     return type.getText();
+}
+
+function capitalizeFirstLetter(str: string): string {
+    if (!str) return str;
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function isFunctionExported(node: FunctionExpression | FunctionDeclaration): boolean {
+    if (Node.isFunctionDeclaration(node)) {
+        // 对于函数声明，直接检查是否导出
+        const isExported = node.isExported();
+        console.log(`FunctionDeclaration ${node.getName() || "anonymous"} is exported: ${isExported}`);
+        return isExported;
+    } else if (Node.isFunctionExpression(node)) {
+        // 对于函数表达式，检查父节点的导出状态
+        let current: Node | undefined = node.getParent();
+
+        while (current) {
+            if (Node.isVariableStatement(current)) {
+                const isExported = current.isExported();
+                console.log(`FunctionExpression in variable statement is exported: ${isExported}`);
+                return isExported;
+            } else if (Node.isExportDeclaration(current)) {
+                // 处理 export { foo }
+                console.log("FunctionExpression in export declaration");
+                return true;
+            } else if (Node.isObjectLiteralExpression(current)) {
+                // 检查对象是否被导出
+                const symbol = current.getSymbol();
+                if (symbol) {
+                    const declarations = symbol.getDeclarations();
+                    for (const decl of declarations) {
+                        if (Node.isVariableDeclaration(decl)) {
+                            const varStatement = decl.getParentIfKind(SyntaxKind.VariableStatement);
+                            if (varStatement && varStatement.isExported()) {
+                                console.log(`FunctionExpression in exported object ${symbol.getName()}`);
+                                return true;
+                            }
+                        } else if (Node.isExportDeclaration(decl)) {
+                            console.log(`FunctionExpression in exported object via export declaration`);
+                            return true;
+                        }
+                    }
+                }
+            }
+            current = current.getParent();
+        }
+
+        console.log("FunctionExpression is not exported");
+        return false;
+    }
+
+    return false;
 }
