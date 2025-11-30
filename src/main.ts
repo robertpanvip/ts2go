@@ -4,17 +4,21 @@ import {
     Block,
     CallExpression,
     Expression,
-    FunctionDeclaration, FunctionExpression,
+    FunctionDeclaration,
+    FunctionExpression,
     Identifier,
     IfStatement,
     ImportDeclaration,
     LeftHandSideExpression,
-    Node, NumericLiteral,
+    Node,
+    NumericLiteral,
     ParameterDeclaration,
-    Project, ReturnStatement,
-    Statement, StringLiteral,
+    Project,
+    ReturnStatement,
+    Statement,
+    StringLiteral,
     ts,
-    Type,
+    Type, TypeAliasDeclaration, TypeLiteralNode,
     TypeOfExpression,
     VariableDeclarationKind,
     VariableStatement
@@ -68,7 +72,7 @@ project.getSourceFiles().forEach(sourceFile => {
 function parseTypeof(node: TypeOfExpression) {
     const exp = node.getExpression();
     return {
-        code: `ts.G_typeof(${exp.getText()})`
+        code: `ts.G_typeof( ${exp.getText()} )`
     }
 }
 
@@ -203,7 +207,7 @@ function parseIfStatement(node: IfStatement) {
     const tst = parseStatement(t);
     const est = e ? parseStatement(e) : null;
     return {
-        code: `if(${exp.code})${tst.code}${e ? `else${est?.code}` : ''}`
+        code: `if ( ${exp.code} )${tst.code}${e ? ` else ${est?.code}` : ''}`
     }
 }
 
@@ -275,7 +279,7 @@ function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDe
         name = node.getName() || "";
     }
     return {
-        code: `func ${isExport ? 'G_' : ''}${name}(${args}) ${returnType} ${body.code}`
+        code: `func ${isExport ? 'G_' : ''}${name}( ${args} ) ${returnType} ${body.code}`
     }
 }
 
@@ -365,12 +369,69 @@ function parseNode(node: Node): CodeResult {
         return parseBlock(node)
     } else if (Node.isImportDeclaration(node)) {
         return parseImportDeclaration(node)
-    }
-    if (Node.isReturnStatement(node)) {
+    } else if (Node.isReturnStatement(node)) {
         return parseReturnTyped(node)
+    }
+    if (Node.isTypeAliasDeclaration(node)) {
+        return parseTypeAliasDeclaration(node)
     }
     return {
         code: node.getText()
+    }
+}
+
+function parseTypeLiteral(node: TypeLiteralNode) {
+    console.log('isTypeLiteral', node.getText());
+    const ms = node.getMembers();
+    let lines: string[] = [];
+    ms.forEach(m=>{
+       if(Node.isPropertySignature(m)){
+           const name = m.getName();
+           const typeNode = m.getTypeNode();
+           const goType = typeNode ? parseType(typeNode.getType()) : "Any";
+
+           lines.push(`G_${name} ${goType}`);
+       }else if(Node.isMethodSignature(m)){
+           const name = m.getName();
+           const params = m.getParameters();
+           const returnType = m.getReturnTypeNode();
+
+           // 参数转换
+           const goParams = params
+               .map((p) => {
+                   const pType = p.getTypeNode();
+                   return `${p.getName()} ${pType ? parseType(pType.getType()) : "Any"}`;
+               })
+               .join(", ");
+
+           // 返回类型转换
+           const goReturn = returnType
+               ? parseType(returnType.getType())
+               : "";
+
+           // 方法签名：不写实现，只写定义
+           lines.push(
+               `func (s *StructName) G_${name}(${goParams}) ${goReturn}`
+           );
+       }
+    })
+    return {
+        code: `struct {\n\t${lines.join('\n\t')}\n}`
+    }
+}
+
+function parseTypeAliasDeclaration(node: TypeAliasDeclaration) {
+    const name = node.getName();
+
+    const typeNode = node.getTypeNode();
+    let val = '';
+    if (Node.isTypeLiteral(typeNode)) {
+        val = parseTypeLiteral(typeNode).code
+    } else {
+        val = parseType(node.getType())
+    }
+    return {
+        code: `type ${name} = ${val}`
     }
 }
 
@@ -424,19 +485,21 @@ function parseBody(body?: Node) {
             code: `return ${exprCode}`
         }
     }
-    const content = parseBlock(body).code
-    res.code = content
+    res.code = parseBlock(body).code
     return res;
 }
 
 function parseBlock(block: Block): CodeResult {
     isInBlock = true;
-    const content = block.getStatements().map(s => parseStatement(s).code).join(';')
+    const content = block.getStatements().map(s => {
+        const code = parseStatement(s).code;
+        return `\t${code.split('\n').join('\n\t')}`
+    }).join(';')
     isInBlock = false;
     const parent = block.getParent()
     const returned = isFunctionLike(parent) && !hasReturn(block)
     return {
-        code: `{\n${content}${returned ? `\nreturn ts.Undefined()` : ""}\n}`
+        code: `{\n${content}${returned ? `\n\treturn ts.Undefined()` : ""}\n}`
     }
 }
 
@@ -454,22 +517,81 @@ function parseDeclarationKind(kind: VariableDeclarationKind) {
 }
 
 function parseType(type: Type) {
-    if (type.isNumber()) {
-        return 'ts.Number'
-    } else if (type.isString()) {
-        return 'ts.String'
-    } else if (type.isStringLiteral()) {
-        return 'ts.String'
-    } else if (type.isBoolean()) {
-        return 'ts.Boolean'
-    } else if (type.isNull()) {
-        return 'ts.Null'
-    } else if (type.isUndefined()) {
-        return 'ts.Undefined'
-    } else if (type.isVoid()) {
-        return 'ts.Undefined'
-    } else if (type.isUnionOrIntersection()) {
-        return 'Any'
+
+    // 1. 基本类型（优先匹配）
+    if (type.isNumber() || type.isNumberLiteral()) return "ts.Number";
+    if (type.isString() || type.isStringLiteral()) return "ts.String";
+    if (type.isBoolean() || type.isBooleanLiteral()) return "ts.Boolean";
+    if (type.isNull()) return "ts.Null";
+    if (type.isUndefined() || type.isVoid()) return "ts.Undefined";
+
+    // 2. 特殊类型
+    if (type.isAny() || type.isUnknown()) return "Any";
+    if (type.isNever()) return "Any"; // 一般不会出现
+    if (type.isObject()) {
+        // 继续往下走
     }
-    return type.getText();
+
+    // 3. 联合类型 | 交叉类型 → 都降级成 Any
+    if (type.isUnionOrIntersection()) {
+        // 可选：你可以尝试解析简单联合，如 string | number → Any
+        return "Any";
+    }
+
+    // 4. 数组类型 number[] 或 Array<string>
+    if (type.isArray()) {
+        return "Array"; // 你的 Array 类型
+    }
+
+    // 5. 获取底层 symbol（关键！）
+    const symbol = type.getSymbol() || type.getAliasSymbol();
+    if (!symbol) {
+        return "Any"; // 无法解析的复杂类型
+    }
+
+    const symbolName = symbol.getName();
+
+    // 6. 内置类型别名（如 Promise、Record 等）
+    /*    if (symbolName === "Promise") return "Any"; // async 函数返回 Any
+        if (symbolName === "Date") return "Any"; // 你可以加 Date 类型
+        if (symbolName === "RegExp") return "Any";*/
+
+    // 7. 用户定义的 type alias、interface、class、enum
+    const declarations = symbol.getDeclarations();
+    if (declarations.length === 0) return "Any";
+
+    const decl = declarations[0];
+
+    // 7.1 类型别名 type User = { name: string }
+    if (Node.isTypeAliasDeclaration(decl)) {
+        const typeName = decl.getName();
+
+        // 推荐：你给每个 type 别名生成一个 struct
+        return `&${typeName}{}`; // 或直接返回 typeName 包名
+    }
+
+    // 7.2 接口 interface Person { name: string }
+    if (Node.isInterfaceDeclaration(decl)) {
+        const interfaceName = decl.getName();
+        return `&${interfaceName}{}`;
+    }
+
+    // 7.3 类 class Animal { name: string }
+    if (Node.isClassDeclaration(decl)) {
+        const className = decl.getName() || "AnonymousClass";
+        return `&${className}{}`;
+    }
+
+    // 7.4 枚举 enum Color { Red, Green }
+    if (Node.isEnumDeclaration(decl)) {
+        return "Number"; // 你的 enum 编译成 Number
+    }
+
+    // 8. __type、__object 等特殊标记（ts-morph 内部）
+    if (symbolName === "__type" || symbolName === "__object") {
+        return "Object";
+    }
+
+    // 9. 默认降级
+    return "Any";
 }

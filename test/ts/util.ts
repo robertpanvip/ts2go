@@ -10,10 +10,12 @@ export function test(x: number | string) {
     }
 }
 
-const parseX:Function=()=> {
+type As = { a: number, foo(x: number): string; };
+
+const parseX: Function = () => {
 
 }
-const x= parseX('1')
-const a="1";
+const x: As = parseX('1')
+const a = "1";
 console.log(a)
 export default test;
