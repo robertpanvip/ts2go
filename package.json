@@ -1,5 +1,5 @@
 {
-  "name": "ts-go",
+  "name": "ts2go",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "cd test & esno ../src/main.ts "
+    "test": "esno ./src/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
