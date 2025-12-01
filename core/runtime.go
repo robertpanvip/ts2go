@@ -1,4 +1,4 @@
-package js
+package runtime
 
 import (
 	"fmt"
@@ -315,4 +315,84 @@ func G_norm(i, length int) int {
 		return length
 	}
 	return i
+}
+
+
+func G_looseEq(a, b Any) bool {
+    switch x := a.(type) {
+    case ts.Number:
+        switch y := b.(type) {
+        case ts.Number:   return x.Val() == y.Val()
+        case ts.String:   return x.Val() == y.Float64() // "123" == 123 → true
+        case bool:        return (x.Val() != 0) == y
+        }
+    case ts.String:
+        if y, ok := b.(ts.Number); ok {
+            return x.Float64() == y.Val()
+        }
+    case bool:
+        if y, ok := b.(ts.Number); ok {
+            return (y.Val() != 0) == x
+        }
+    }
+    return a == b // 兜底
+}
+
+func G_looseNeq(a, b Any) bool {
+    return !G_looseEq(a, b)
+}
+
+// G_add 完全实现 JavaScript 的 + 运算符规则（ToPrimitive + ToString 拼接优先）
+// 对应 JS 的：  any + any
+func G_add(a, b Any) Any {
+    // 1. 如果任一方是 string → 强制转成字符串拼接
+    if isString(a) || isString(b) {
+        return a.G_toString() + b.G_toString()
+    }
+
+    // 2. 否则都尝试转成 number 相加
+    n1 := toNumber(a)
+    n2 := toNumber(b)
+
+    // NaN + anything = NaN
+    if math.IsNaN(n1) || math.IsNaN(n2) {
+        return Number(math.NaN())
+    }
+
+    return Number(n1 + n2)
+}
+
+// toNumber 模拟 JS 的 ToNumber 转换
+func toNumber(v any) Number {
+    switch x := v.(type) {
+    case Number:
+        return Number(x)
+    case String:
+        // 模仿 JS 解析：空字符串 → 0，"  123.45  " → 123.45，非法 → NaN
+        s := String(x)
+        if s == "" {
+            return Number(0)
+        }
+        f, err := strconv.ParseFloat(s, 64)
+        if err != nil {
+            return Number(math.NaN())
+        }
+        return Number(f)
+    case Boolean:
+        if x {
+            return Number(1)
+        }
+        return Number(0)
+    case nil:
+        return Number(0)
+    case Undefined:
+        return Number(math.NaN())
+    default:
+        return Number(math.NaN())
+    }
+}
+// isString 判断是否为 ts.String 类型（避免反射开销）
+func isString(v Any) bool {
+    _, ok := v.(String)
+    return ok
 }

@@ -2,18 +2,18 @@ import {
     ArrowFunction,
     BinaryExpression,
     Block,
-    CallExpression,
+    CallExpression, ExportAssignment,
     Expression,
     FunctionDeclaration,
     FunctionExpression,
     Identifier,
     IfStatement,
     ImportDeclaration,
-    LeftHandSideExpression,
+    LeftHandSideExpression, MethodDeclaration,
     Node,
-    NumericLiteral,
+    NumericLiteral, ObjectLiteralElementLike, ObjectLiteralExpression,
     ParameterDeclaration,
-    Project,
+    Project, PropertyAssignment,
     ReturnStatement,
     Statement,
     StringLiteral,
@@ -32,7 +32,7 @@ const cwd = process.cwd();
 const appDirectory = fs.realpathSync(cwd);
 
 type CodeResult = {
-    code: string
+    code: string,
 }
 
 const project = new Project();
@@ -41,10 +41,10 @@ const project = new Project();
 project.addSourceFilesAtPaths("./test/ts/*.ts");
 
 const polyfill = new Map<string, Map<string, string>>();
-//是否在块级作用域
-let isInBlock = false;
+
+
 project.getSourceFiles().forEach(sourceFile => {
-    let res = `import ts "ts2go/core/ts"\n`;
+    let res = `import ts "ts2go/core/runtime"\n`;
     sourceFile.getStatements().forEach(statement => {
         const sourcePath = statement.getSourceFile().getDirectory().getPath();
         let current = polyfill.get(sourcePath);
@@ -72,7 +72,7 @@ project.getSourceFiles().forEach(sourceFile => {
 function parseTypeof(node: TypeOfExpression) {
     const exp = node.getExpression();
     return {
-        code: `ts.G_typeof( ${exp.getText()} )`
+        code: `ts.G_typeof(${exp.getText()})`
     }
 }
 
@@ -207,7 +207,7 @@ function parseIfStatement(node: IfStatement) {
     const tst = parseStatement(t);
     const est = e ? parseStatement(e) : null;
     return {
-        code: `if ( ${exp.code} )${tst.code}${e ? ` else ${est?.code}` : ''}`
+        code: `if ${exp.code} ${tst.code}${e ? ` else ${est?.code}` : ''}`
     }
 }
 
@@ -238,8 +238,24 @@ function parseVariableStatement(node: VariableStatement) {
 }
 
 function parseIdentifier(id: Identifier) {
+    const df = id.getSymbol()?.getDeclarations()[0];
+    const vs = df?.getParent()?.getParent();
+    let isExport = false;
+    if (vs && Node.isVariableStatement(vs)) {
+        isExport = vs.hasModifier(ts.SyntaxKind.ExportKeyword)
+    }
+    const isGlobal = isGlobalIdentifier(id);
+    const globalStr = isGlobal ? "ts.Global." : ""
+    if (df && Node.isFunctionDeclaration(df)) {
+        isExport = df.hasModifier(ts.SyntaxKind.ExportKeyword)
+        return {
+            code: `${globalStr}${isExport || isGlobal ? "G_" : ""}${id.getText()}`
+        }
+    }
+    // 普通变量/属性：非全局需要加 .(Type) 类型断言
+    const typeAssertion = isGlobal ? "" : `.(${parseType(id.getType())})`
     return {
-        code: `${isInBlock ? "" : "G_"}${id.getText()}.(${parseType(id.getType())})`
+        code: `${globalStr}${isExport || isGlobal ? "G_" : ""}${id.getText()}${typeAssertion}`
     }
 }
 
@@ -255,20 +271,75 @@ function parseNumericLiteral(node: NumericLiteral) {
     };
 }
 
+function parseOperatorToken(op: Node<ts.BinaryOperatorToken>, left: string, right: string): CodeResult {
+    const text = op.getText();           // 原始 token 文本，例如 "===", "+", "??"
+    const kind = op.getKind();
+    // 绝大多数运算符 Go 和 TS 完全一样，直接原样输出
+    const directMap = new Map<ts.SyntaxKind, string>([
+        [ts.SyntaxKind.PlusToken, "+"],
+        [ts.SyntaxKind.MinusToken, "-"],
+        [ts.SyntaxKind.AsteriskToken, "*"],
+        [ts.SyntaxKind.SlashToken, "/"],
+        [ts.SyntaxKind.PercentToken, "%"],
+        [ts.SyntaxKind.AsteriskAsteriskToken, "**"],        // Go 1.21+ 支持 math.Pow，但我们保留 **
+        [ts.SyntaxKind.LessThanToken, "<"],
+        [ts.SyntaxKind.LessThanEqualsToken, "<="],
+        [ts.SyntaxKind.GreaterThanToken, ">"],
+        [ts.SyntaxKind.GreaterThanEqualsToken, ">="],
+        [ts.SyntaxKind.AmpersandToken, "&"],
+        [ts.SyntaxKind.BarToken, "|"],
+        [ts.SyntaxKind.CaretToken, "^"],
+        [ts.SyntaxKind.AmpersandAmpersandToken, "&&"],
+        [ts.SyntaxKind.BarBarToken, "||"],
+        [ts.SyntaxKind.EqualsEqualsEqualsToken, "=="],  // JS ==  → Go ==
+        [ts.SyntaxKind.ExclamationEqualsEqualsToken, "!="],     // !== → ts.G_neq(a, b)
+    ]);
+
+    // 特殊处理：需要映射成 Go 辅助函数的运算符
+    const specialMap = new Map<ts.SyntaxKind, string>([
+        [ts.SyntaxKind.InstanceOfKeyword, "ts.G_instanceof"], // 同上，转成辅助函数
+        [ts.SyntaxKind.InKeyword, "ts.G_in"],           // Go 没有 in，我们后面会转成辅助函数
+        [ts.SyntaxKind.EqualsEqualsToken, "ts.G_looseEq"],          // JS ==  → Go ==
+        [ts.SyntaxKind.ExclamationEqualsToken, "G_looseNeq"],       // JS !=  → Go !=
+        [ts.SyntaxKind.PlusToken, "ts.G_add"],     // + 字符串拼接 → ts.G_add
+        [ts.SyntaxKind.QuestionQuestionToken, "ts.G_coalesce"],// ?? → ts.G_coalesce
+        [ts.SyntaxKind.InstanceOfKeyword, "ts.G_instanceof"],
+    ]);
+
+    // 1. 先看是否要走特殊映射（===、!==、+、??、in、instanceof）
+    if (specialMap.has(kind)) {
+        const fn = specialMap.get(kind)!;
+        return {code: `${fn}(${left},${right})`};   // 返回函数名，外面会拼成 ts.G_eq(left, right)
+    }
+
+    // 2. 直接映射的普通运算符
+    if (directMap.has(kind)) {
+        return {code: `${left} ${directMap.get(kind)!} ${right}`};
+    }
+
+    // 3. 没见过的（理论上不应该走到这里）
+    return {
+        code: text,
+    };
+}
+
 function parseBinaryExpression(expression: BinaryExpression) {
     const left = parseExpression(expression.getLeft());
     const right = parseExpression(expression.getRight());
     const op = expression.getOperatorToken()
     return {
-        code: `${left.code} ${op.getText()} ${right.code}`
+        code: parseOperatorToken(op, left.code, right.code).code
     }
+    /*return {
+        code: `${left.code} ${} ${right.code}`
+    }*/
 }
 
 function isFunctionLike(node: Node) {
     return Node.isArrowFunction(node) || Node.isFunctionExpression(node) || Node.isFunctionDeclaration(node);
 }
 
-function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDeclaration): CodeResult {
+function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDeclaration | MethodDeclaration): CodeResult {
     const isExport = node.hasModifier(ts.SyntaxKind.ExportKeyword)
     const parameters = node.getParameters();
     const args = parseParameters(parameters).code;
@@ -278,16 +349,19 @@ function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDe
     if (!Node.isArrowFunction(node)) {
         name = node.getName() || "";
     }
+    if (Node.isMethodDeclaration(node)) {
+        return {
+            code: `G_${name}: func (${args}) ${returnType} ${body.code}`
+        }
+    }
     return {
-        code: `func ${isExport ? 'G_' : ''}${name}( ${args} ) ${returnType} ${body.code}`
+        code: `func ${isExport ? 'G_' : ''}${name}(${args}) ${returnType} ${body.code}`
     }
 }
 
 function parseExpression(expression?: Expression): CodeResult {
     if (!expression) {
-        return {
-            code: ''
-        }
+        return {code: ''}
     }
     if (Node.isIdentifier(expression)) {
         return parseIdentifier(expression)
@@ -303,9 +377,52 @@ function parseExpression(expression?: Expression): CodeResult {
         return parseBinaryExpression(expression)
     } else if (Node.isCallExpression(expression)) {
         return parseCallExpression(expression);
+    } else if (Node.isObjectLiteralExpression(expression)) {
+        return parseObjectLiteralExpression(expression)
     }
     return {code: ''}
 }
+
+function parseObjectLiteralExpression(expression: ObjectLiteralExpression) {
+
+    const parent = expression.getParent();
+    const block = parent.getParent();
+    const fun = block?.getParent();
+    if (Node.isReturnStatement(parent) && fun && isFunctionLike(fun)) {
+        let returnType = (fun as FunctionDeclaration).getReturnType();
+        let returnTypeStr = returnType.getText();
+        const properties = expression.getProperties();
+        return {
+            code: `&${returnTypeStr}{\n\t${properties.map((p) => {
+                return parseObjectLiteralElementLike(p).code.split('\n').join('\n\t')
+            }).join(',\n\t')},\n}`
+        }
+    }
+    return {code: ''}
+}
+
+function parseObjectLiteralElementLike(node: ObjectLiteralElementLike) {
+    if (Node.isPropertyAssignment(node)) {
+        return parsePropertyAssignment(node);
+    } else if (Node.isShorthandPropertyAssignment(node)) {
+
+    } else if (Node.isSpreadAssignment(node)) {
+
+    } else if (Node.isMethodDeclaration(node)) {
+        return parseFunctionLike(node);
+    } else if (Node.isPropertyAccessExpression(node)) {
+
+    }
+    return {code: ''}
+}
+
+function parsePropertyAssignment(node: PropertyAssignment) {
+    const name = node.getName();
+    const initializer = node.getInitializer();
+
+    return {code: `G_${name}: ${parseExpression(initializer).code}`}
+}
+
 
 function isGlobalIdentifier(id: Identifier): boolean {
     // 情况2：完全没有 symbol → 一定是运行环境提供的全局（如 console、alert）
@@ -330,10 +447,7 @@ function isGlobalIdentifier(id: Identifier): boolean {
 
 function parseLeftHandSideExpression(expression: LeftHandSideExpression): CodeResult {
     if (Node.isIdentifier(expression)) {
-        const isGlobal = isGlobalIdentifier(expression);
-        return {
-            code: `${isGlobal ? "ts.Global." : ""}G_${expression.getText()}`
-        }
+        return parseIdentifier(expression)
     }
     if (Node.isPropertyAccessExpression(expression)) {
         const last = expression.getName();
@@ -347,10 +461,19 @@ function parseLeftHandSideExpression(expression: LeftHandSideExpression): CodeRe
     }
 }
 
+function parseExportAssignment(node: ExportAssignment) {
+    let name = 'default';
+    const expression = node.getExpression();
+    const declaration = expression.getSymbol()!.getDeclarations()[0]!;
+    const isExport = declaration.getCombinedModifierFlags() === ts.ModifierFlags.Export
+    return {code: `var G_${name} = ${(isExport ? 'G_' : "") + expression.getText()}`}
+}
+
 function parseNode(node: Node): CodeResult {
-    // 检查 statement 是否是导出的
-    if (Node.isVariableStatement(node)) {
-        return parseVariableStatement(node);
+    if (Node.isIdentifier(node)) {
+        return parseIdentifier(node)
+    } else if (Node.isVariableStatement(node)) {
+        return parseVariableStatement(node);  // 检查 statement 是否是导出的
     } else if (Node.isFunctionDeclaration(node)) {
         return parseFunctionLike(node)
     } else if (Node.isExpressionStatement(node)) {
@@ -358,11 +481,7 @@ function parseNode(node: Node): CodeResult {
     } else if (Node.isExpression(node)) {
         return parseExpression(node)
     } else if (Node.isExportAssignment(node)) {
-        let name = 'default';
-        const expression = node.getExpression();
-        const declaration = expression.getSymbol()!.getDeclarations()[0]!;
-        const isExport = declaration.getCombinedModifierFlags() === ts.ModifierFlags.Export
-        return {code: `var G_${name} = ${(isExport ? 'G_' : "") + expression.getText()}`}
+        return parseExportAssignment(node)
     } else if (Node.isIfStatement(node)) {
         return parseIfStatement(node)
     } else if (Node.isBlock(node)) {
@@ -371,8 +490,7 @@ function parseNode(node: Node): CodeResult {
         return parseImportDeclaration(node)
     } else if (Node.isReturnStatement(node)) {
         return parseReturnTyped(node)
-    }
-    if (Node.isTypeAliasDeclaration(node)) {
+    } else if (Node.isTypeAliasDeclaration(node)) {
         return parseTypeAliasDeclaration(node)
     }
     return {
@@ -381,39 +499,38 @@ function parseNode(node: Node): CodeResult {
 }
 
 function parseTypeLiteral(node: TypeLiteralNode) {
-    console.log('isTypeLiteral', node.getText());
     const ms = node.getMembers();
     let lines: string[] = [];
-    ms.forEach(m=>{
-       if(Node.isPropertySignature(m)){
-           const name = m.getName();
-           const typeNode = m.getTypeNode();
-           const goType = typeNode ? parseType(typeNode.getType()) : "Any";
+    ms.forEach(m => {
+        if (Node.isPropertySignature(m)) {
+            const name = m.getName();
+            const typeNode = m.getTypeNode();
+            const goType = typeNode ? parseType(typeNode.getType()) : "Any";
 
-           lines.push(`G_${name} ${goType}`);
-       }else if(Node.isMethodSignature(m)){
-           const name = m.getName();
-           const params = m.getParameters();
-           const returnType = m.getReturnTypeNode();
+            lines.push(`G_${name} ${goType}`);
+        } else if (Node.isMethodSignature(m)) {
+            const name = m.getName();
+            const params = m.getParameters();
+            const returnType = m.getReturnTypeNode();
 
-           // 参数转换
-           const goParams = params
-               .map((p) => {
-                   const pType = p.getTypeNode();
-                   return `${p.getName()} ${pType ? parseType(pType.getType()) : "Any"}`;
-               })
-               .join(", ");
+            // 参数转换
+            const goParams = params
+                .map((p) => {
+                    const pType = p.getTypeNode();
+                    return `${p.getName()} ${pType ? parseType(pType.getType()) : "Any"}`;
+                })
+                .join(", ");
 
-           // 返回类型转换
-           const goReturn = returnType
-               ? parseType(returnType.getType())
-               : "";
+            // 返回类型转换
+            const goReturn = returnType
+                ? parseType(returnType.getType())
+                : "";
 
-           // 方法签名：不写实现，只写定义
-           lines.push(
-               `func (s *StructName) G_${name}(${goParams}) ${goReturn}`
-           );
-       }
+            // 方法签名：不写实现，只写定义
+            lines.push(
+                `G_${name} func (${goParams}) ${goReturn}`
+            );
+        }
     })
     return {
         code: `struct {\n\t${lines.join('\n\t')}\n}`
@@ -431,7 +548,7 @@ function parseTypeAliasDeclaration(node: TypeAliasDeclaration) {
         val = parseType(node.getType())
     }
     return {
-        code: `type ${name} = ${val}`
+        code: `type ${name} ${val}`
     }
 }
 
@@ -490,16 +607,14 @@ function parseBody(body?: Node) {
 }
 
 function parseBlock(block: Block): CodeResult {
-    isInBlock = true;
     const content = block.getStatements().map(s => {
         const code = parseStatement(s).code;
-        return `\t${code.split('\n').join('\n\t')}`
+        return `${code.split('\n').join('\n\t')}`
     }).join(';')
-    isInBlock = false;
     const parent = block.getParent()
     const returned = isFunctionLike(parent) && !hasReturn(block)
     return {
-        code: `{\n${content}${returned ? `\n\treturn ts.Undefined()` : ""}\n}`
+        code: `{\n\t${content}${returned ? `\n\treturn ts.Undefined()` : ""}\n}`
     }
 }
 
@@ -511,7 +626,7 @@ function parseDeclarationKind(kind: VariableDeclarationKind) {
         case VariableDeclarationKind.Let:
             return 'var'
         case VariableDeclarationKind.Const:
-            return 'const'
+            return 'var'
     }
     return kind.toString()
 }
@@ -586,9 +701,13 @@ function parseType(type: Type) {
     if (Node.isEnumDeclaration(decl)) {
         return "Number"; // 你的 enum 编译成 Number
     }
+    if (Node.isTypeLiteral(decl.getType().getSymbol()?.getDeclarations()[0])) {
+        return `*${type.getText()}`;
+    }
 
     // 8. __type、__object 等特殊标记（ts-morph 内部）
     if (symbolName === "__type" || symbolName === "__object") {
+
         return "Object";
     }
 
