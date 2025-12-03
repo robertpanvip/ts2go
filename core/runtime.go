@@ -20,15 +20,15 @@ type Undefined struct{} // undefined 的专用类型
 type Symbol struct{} // Symbol 的专用类型
 type Object struct{} // Object 的专用类型
 
-type Function func(this Any, args ...Any) Any
+type Function func(args ...Any) Any
 // 引用值
 type Array  []Any
 
-func G_typeof(x Any) string {
+func G_typeof(x Any) String {
     if x == nil {
         return "undefined"
     }
-	switch v := x.(type) {
+	switch x.(type) {
 	case Number:
 		return "number"
 	case String:
@@ -190,7 +190,7 @@ func (b Boolean) G_valueOf() Boolean { return b }
      // parseInt(string: String, radix?: Number) → Number
      G_parseInt: func(args ...Any) Any {
          if len(args) == 0 {
-             return Global.G_NaN
+             return Number(math.NaN())
          }
          str := strings.TrimSpace(string(G_toString(args[0])))
          radix := 10
@@ -203,18 +203,18 @@ func (b Boolean) G_valueOf() Boolean { return b }
          if i, err := strconv.ParseInt(str, radix, 64); err == nil {
              return Number(i)
          }
-         return Global.G_NaN
+         return Number(math.NaN())
      },
 
      // parseFloat(string: String) → Number
      G_parseFloat: func(args ...Any) Any {
          if len(args) == 0 {
-             return Global.G_NaN
+             return Number(math.NaN())
          }
          if f, err := strconv.ParseFloat(strings.TrimSpace(string(G_toString(args[0]))), 64); err == nil {
              return Number(f)
          }
-         return Global.G_NaN
+         return Number(math.NaN())
      },
 
      // isNaN(value: Any) → Boolean
@@ -238,7 +238,7 @@ func (b Boolean) G_valueOf() Boolean { return b }
      G_console: struct {
          G_log Function
      }{
-         G_log: func(args ...Any) Any {
+         G_log: func( args ...Any) Any {
              parts := make([]string, len(args))
              for i, a := range args {
                  parts[i] = string(G_toString(a))
@@ -261,7 +261,7 @@ func G_toString(v Any) String {
 	case nil:
 		return "null"
 	case Function:
-		return x.G_toString()
+		return "Function"
 	default:
 		return String(fmt.Sprintf("%v", v))
 	}
@@ -275,7 +275,7 @@ func G_toNumber(v Any) Number {
 		if f, err := strconv.ParseFloat(strings.TrimSpace(string(x)), 64); err == nil {
 			return Number(f)
 		}
-		return Global.G_NaN
+		return Number(math.NaN())
 	case Boolean:
 		if x {
 			return Number(1)
@@ -284,7 +284,7 @@ func G_toNumber(v Any) Number {
 	case nil:
 		return Number(0)
 	default:
-		return Global.G_NaN
+		return Number(math.NaN())
 	}
 }
 
@@ -293,7 +293,7 @@ func G_toBoolean(v Any) Boolean {
 	case Boolean:
 		return x
 	case Number:
-		return x != |x != 0 && !math.IsNaN(float64(x))
+        return Boolean(x != 0 && !math.IsNaN(float64(x)))
 	case String:
 		return len(x) > 0
 	case nil:
@@ -302,6 +302,7 @@ func G_toBoolean(v Any) Boolean {
 		return true
 	}
 }
+
 
 // ====================== 辅助函数（私有，不导出）======================
 func G_norm(i, length int) int {
@@ -320,19 +321,19 @@ func G_norm(i, length int) int {
 
 func G_looseEq(a, b Any) bool {
     switch x := a.(type) {
-    case ts.Number:
+    case Number:
         switch y := b.(type) {
-        case ts.Number:   return x.Val() == y.Val()
-        case ts.String:   return x.Val() == y.Float64() // "123" == 123 → true
-        case bool:        return (x.Val() != 0) == y
+        case Number:   return x == y
+        case String:   return String(x) == String(y) // "123" == 123 → true
+        case bool:        return (x != 0) == y
         }
-    case ts.String:
-        if y, ok := b.(ts.Number); ok {
-            return x.Float64() == y.Val()
+    case String:
+        if y, ok := b.(Number); ok {
+            return String(x) == String(y)
         }
     case bool:
-        if y, ok := b.(ts.Number); ok {
-            return (y.Val() != 0) == x
+        if y, ok := b.(Number); ok {
+            return (y != 0) == x
         }
     }
     return a == b // 兜底
@@ -347,7 +348,7 @@ func G_looseNeq(a, b Any) bool {
 func G_add(a, b Any) Any {
     // 1. 如果任一方是 string → 强制转成字符串拼接
     if isString(a) || isString(b) {
-        return a.G_toString() + b.G_toString()
+        return a.(String) + b.(String)
     }
 
     // 2. 否则都尝试转成 number 相加
@@ -355,7 +356,7 @@ func G_add(a, b Any) Any {
     n2 := toNumber(b)
 
     // NaN + anything = NaN
-    if math.IsNaN(n1) || math.IsNaN(n2) {
+    if math.IsNaN(float64(n1)) || math.IsNaN(float64(n2)) {
         return Number(math.NaN())
     }
 
@@ -373,7 +374,7 @@ func toNumber(v any) Number {
         if s == "" {
             return Number(0)
         }
-        f, err := strconv.ParseFloat(s, 64)
+        f, err := strconv.ParseFloat(string(s), 64)
         if err != nil {
             return Number(math.NaN())
         }

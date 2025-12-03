@@ -44,7 +44,7 @@ const polyfill = new Map<string, Map<string, string>>();
 
 
 project.getSourceFiles().forEach(sourceFile => {
-    let res = `import ts "ts2go/core/runtime"\n`;
+    let res = `package ${sourceFile.getBaseNameWithoutExtension()}\nimport ts "github.com/robertpanvip/ts2go/core"\n`;
     sourceFile.getStatements().forEach(statement => {
         const sourcePath = statement.getSourceFile().getDirectory().getPath();
         let current = polyfill.get(sourcePath);
@@ -60,7 +60,8 @@ project.getSourceFiles().forEach(sourceFile => {
         pl += item;
     })
     const code = pl + res;
-    fs.writeFileSync(path.resolve(sourcePath, '../') + `/go/${sourceFile.getBaseNameWithoutExtension()}.go`, code)
+    const baseName = sourceFile.getBaseNameWithoutExtension();
+    fs.writeFileSync(path.resolve(sourcePath, '../') + `/go/${baseName}/${baseName}.go`, code)
 })
 
 /*function setCurrentEntryVar(node: Node, code: string) {
@@ -171,10 +172,10 @@ function parseImportDeclaration(
     if (namespaceImport) {
         // import * as math from "./math"  →  import math "xxx/go/math"
         const alias = namespaceImport.getText();
-        imports.push(`import ${alias} "${goImportPath}"`);
+        imports.push(`import ${alias} "github.com/robertpanvip/${goImportPath}"`);
     } else {
         // 其他两种都用最后一个路径段作为包别名
-        imports.push(`import ${pkgAlias} "${goImportPath}"`);
+        imports.push(`import ${pkgAlias} "github.com/robertpanvip/${goImportPath}"`);
     }
 
     // ---------- 命名导入 ----------
@@ -554,7 +555,7 @@ function parseTypeAliasDeclaration(node: TypeAliasDeclaration) {
 
 function parseReturnTyped(node: ReturnStatement) {
     const exp = node.getExpression();
-    let content = `ts.Undefined()`
+    let content = `ts.Undefined{}`
     if (exp) {
         content = parseExpression(exp).code;
     }
@@ -614,7 +615,7 @@ function parseBlock(block: Block): CodeResult {
     const parent = block.getParent()
     const returned = isFunctionLike(parent) && !hasReturn(block)
     return {
-        code: `{\n\t${content}${returned ? `\n\treturn ts.Undefined()` : ""}\n}`
+        code: `{\n\t${content}${returned ? `\n\treturn ts.Undefined{}` : ""}\n}`
     }
 }
 
@@ -641,8 +642,8 @@ function parseType(type: Type) {
     if (type.isUndefined() || type.isVoid()) return "ts.Undefined";
 
     // 2. 特殊类型
-    if (type.isAny() || type.isUnknown()) return "Any";
-    if (type.isNever()) return "Any"; // 一般不会出现
+    if (type.isAny() || type.isUnknown()) return "ts.Any";
+    if (type.isNever()) return "ts.Any"; // 一般不会出现
     if (type.isObject()) {
         // 继续往下走
     }
@@ -650,7 +651,7 @@ function parseType(type: Type) {
     // 3. 联合类型 | 交叉类型 → 都降级成 Any
     if (type.isUnionOrIntersection()) {
         // 可选：你可以尝试解析简单联合，如 string | number → Any
-        return "Any";
+        return "ts.Any";
     }
 
     // 4. 数组类型 number[] 或 Array<string>
@@ -661,7 +662,7 @@ function parseType(type: Type) {
     // 5. 获取底层 symbol（关键！）
     const symbol = type.getSymbol() || type.getAliasSymbol();
     if (!symbol) {
-        return "Any"; // 无法解析的复杂类型
+        return "ts.Any"; // 无法解析的复杂类型
     }
 
     const symbolName = symbol.getName();
@@ -673,7 +674,7 @@ function parseType(type: Type) {
 
     // 7. 用户定义的 type alias、interface、class、enum
     const declarations = symbol.getDeclarations();
-    if (declarations.length === 0) return "Any";
+    if (declarations.length === 0) return "ts.Any";
 
     const decl = declarations[0];
 
@@ -712,5 +713,5 @@ function parseType(type: Type) {
     }
 
     // 9. 默认降级
-    return "Any";
+    return "ts.Any";
 }

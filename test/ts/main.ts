@@ -24,5 +24,9 @@ function getAs(): As {
 
 const x: As = getAs()
 const a = "1";
-console.log(a)
+
+function main() {
+    console.log(a)
+}
+
 //export default test;
