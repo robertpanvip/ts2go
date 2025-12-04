@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 const goExe = path.join(__dirname, 'lib', 'go', 'bin', 'go.exe');
 
 // main.go 路径
-const mainGo = path.join(__dirname, 'test', 'go', "main", 'main.go');
+const mainGo = path.join(__dirname, 'test', 'go', "setup", 'setup.go');
 
 // spawn go.exe
 const proc = spawn(goExe, ['run', mainGo], { stdio: 'inherit', cwd: __dirname });

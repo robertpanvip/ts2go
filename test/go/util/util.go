@@ -1,4 +1,4 @@
-package main
+package util
 import ts "github.com/robertpanvip/ts2go/core"
 import demo "github.com/robertpanvip/ts2go/test/go/demo"
 var G_expose = demo.G_expose
@@ -28,6 +28,4 @@ func getAs() *As {
 }
 var x *As = getAs();
 var a ts.String = ts.String("1");
-func main() {
-	ts.Global.G_console.G_log(a)
-}
+var _exp0 = ts.Global.G_console.G_log(G_expose())

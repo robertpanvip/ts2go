@@ -3,7 +3,7 @@ import {
     BinaryExpression,
     Block,
     CallExpression, ExportAssignment,
-    Expression,
+    Expression, ExpressionStatement,
     FunctionDeclaration,
     FunctionExpression,
     Identifier,
@@ -25,7 +25,7 @@ import {
 } from "ts-morph";
 import fs from 'node:fs'
 import * as path from "node:path";
-import {hasReturn} from "./helper";
+import {hasReturn, isFunctionType} from "./helper";
 
 const cwd = process.cwd();
 
@@ -40,35 +40,36 @@ const project = new Project();
 // 添加 `src` 目录下的所有 TypeScript 文件
 project.addSourceFilesAtPaths("./test/ts/*.ts");
 
-const polyfill = new Map<string, Map<string, string>>();
-
+const importVars = new Map<string, Map<string, string>>();
+let expId = 0;
 
 project.getSourceFiles().forEach(sourceFile => {
     let res = `package ${sourceFile.getBaseNameWithoutExtension()}\nimport ts "github.com/robertpanvip/ts2go/core"\n`;
     sourceFile.getStatements().forEach(statement => {
         const sourcePath = statement.getSourceFile().getDirectory().getPath();
-        let current = polyfill.get(sourcePath);
+        let current = importVars.get(sourcePath);
         if (!current) {
             current = new Map();
-            polyfill.set(sourcePath, current)
+            importVars.set(sourcePath, current)
         }
         res += parseStatement(statement).code + '\n';
     })
     const sourcePath = sourceFile.getDirectory().getPath();
-    let pl = '';
-    polyfill.get(sourcePath)?.forEach(item => {
-        pl += item;
-    })
-    const code = pl + res;
     const baseName = sourceFile.getBaseNameWithoutExtension();
-    fs.writeFileSync(path.resolve(sourcePath, '../') + `/go/${baseName}/${baseName}.go`, code)
+    fs.writeFileSync(path.resolve(sourcePath, '../') + `/go/${baseName}/${baseName}.go`, res)
 })
 
-/*function setCurrentEntryVar(node: Node, code: string) {
+function setCurrentEntryVars(node: Node, key: string, code: string) {
     const sourcePath = node.getSourceFile().getDirectory().getPath();
-    let current = polyfill.get(sourcePath)!;
-    current.set('typeof', code)
-}*/
+    let current = importVars.get(sourcePath)!;
+    current.set(key, code)
+}
+
+function getCurrentEntryVars(node: Node, key: string) {
+    const sourcePath = node.getSourceFile().getDirectory().getPath();
+    let current = importVars.get(sourcePath)!;
+    return current.get(key)
+}
 
 function parseTypeof(node: TypeOfExpression) {
     const exp = node.getExpression();
@@ -186,14 +187,18 @@ function parseImportDeclaration(
             const localName = spec.getAliasNode()?.getText() ?? importedName;
 
             // 生成 var xxx = pkg.G_xxx
-            extraVars.push(`var G_${localName} = ${pkgAlias}.G_${importedName}`);
+            const extraVar = `var G_${localName} = ${pkgAlias}.G_${importedName}`
+            extraVars.push(extraVar);
+            setCurrentEntryVars(node, localName, extraVar)
         }
     }
 
     // ---------- 默认导入 ----------
     if (defaultImport) {
         const localName = defaultImport.getText();
-        extraVars.push(`var G_${localName} = ${pkgAlias}.G_default`);
+        const extraVar = `var G_${localName} = ${pkgAlias}.G_default`
+        extraVars.push(extraVar);
+        setCurrentEntryVars(node, localName, extraVar)
     }
 
     // ---------- 组合输出 ----------
@@ -253,10 +258,13 @@ function parseIdentifier(id: Identifier) {
             code: `${globalStr}${isExport || isGlobal ? "G_" : ""}${id.getText()}`
         }
     }
+    const refType = id.getSymbol()?.getDeclarations()[0].getType()
+    const isAny = refType ? parseType(refType) === 'ts.Any' : false;
     // 普通变量/属性：非全局需要加 .(Type) 类型断言
-    const typeAssertion = isGlobal ? "" : `.(${parseType(id.getType())})`
+    const typeAssertion = isGlobal || (!isAny) ? "" : `.(${parseType(id.getType())})`
+    const isImport =  !!getCurrentEntryVars(id, id.getText());
     return {
-        code: `${globalStr}${isExport || isGlobal ? "G_" : ""}${id.getText()}${typeAssertion}`
+        code: `${globalStr}${isExport || isGlobal || isImport ? "G_" : ""}${id.getText()}${typeAssertion}`
     }
 }
 
@@ -470,6 +478,15 @@ function parseExportAssignment(node: ExportAssignment) {
     return {code: `var G_${name} = ${(isExport ? 'G_' : "") + expression.getText()}`}
 }
 
+function parseExpressionStatement(node: ExpressionStatement) {
+    const res = parseExpression(node.getExpression());
+    const parent = node.getParent();
+    const isSourceFile = Node.isSourceFile(parent)
+    return {
+        code: `${isSourceFile ? `var _exp${expId++} = ` : ""}${res.code}`
+    }
+}
+
 function parseNode(node: Node): CodeResult {
     if (Node.isIdentifier(node)) {
         return parseIdentifier(node)
@@ -478,7 +495,7 @@ function parseNode(node: Node): CodeResult {
     } else if (Node.isFunctionDeclaration(node)) {
         return parseFunctionLike(node)
     } else if (Node.isExpressionStatement(node)) {
-        return parseExpression(node.getExpression())
+        return parseExpressionStatement(node)
     } else if (Node.isExpression(node)) {
         return parseExpression(node)
     } else if (Node.isExportAssignment(node)) {
@@ -646,6 +663,10 @@ function parseType(type: Type) {
     if (type.isNever()) return "ts.Any"; // 一般不会出现
     if (type.isObject()) {
         // 继续往下走
+    }
+    // 2. 函数类型核心判断（关键！）
+    if (isFunctionType(type)) {
+        return "ts.Function";
     }
 
     // 3. 联合类型 | 交叉类型 → 都降级成 Any

@@ -17,7 +17,7 @@ type String string
 type Boolean bool
 type Null     struct{}  // null 的专用类型
 type Undefined struct{} // undefined 的专用类型
-type Symbol struct{} // Symbol 的专用类型
+type Symbol struct{ val String } // Symbol 的专用类型
 type Object struct{} // Object 的专用类型
 
 type Function func(args ...Any) Any
@@ -170,6 +170,21 @@ func (b Boolean) G_toString() String {
 }
 func (b Boolean) G_valueOf() Boolean { return b }
 
+func (b Undefined) G_toString() String {
+	return "undefined"
+}
+
+func (b Null) G_toString() String {
+	return "null"
+}
+
+func (b Symbol) G_toString() String {
+	return "Symbol(" + b.val +")"
+}
+
+func (b Symbol) G_for(val String) String {
+	return "Symbol(" + val +")"
+}
 // ====================== 全局对象：彻底重构（全 G_ 风格 + 新 Function）======================
  var Global = struct {
      G_NaN      Number
@@ -258,6 +273,10 @@ func G_toString(v Any) String {
 		return x.G_toString()
 	case Boolean:
 		return x.G_toString()
+	case Null:
+        return x.G_toString()
+    case Undefined:
+        return x.G_toString()
 	case nil:
 		return "null"
 	case Function:

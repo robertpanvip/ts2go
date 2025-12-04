@@ -1,4 +1,4 @@
-import {Statement, Node, Block} from "ts-morph";
+import {Statement, Node, Block, Type} from "ts-morph";
 
 export function hasReturn(block: Block) {
     return hasReturnDeep(block.getStatements())
@@ -51,4 +51,24 @@ export function hasReturnDeep(statements: readonly Statement[]): boolean {
         }
     }
     return false;
+}
+
+/**
+ * 核心：判断类型是否为函数类型（替代 isFunction/isSignature）
+ * @param type ts-morph 的 Type 实例
+ * @returns 是否为函数/方法/签名类型
+ */
+export function isFunctionType(type: Type): boolean {
+    // 3. 兜底：通过类型的符号/声明判断（覆盖边缘场景）
+    const symbol = type.getSymbol() || type.getAliasSymbol();
+    if (!symbol) return false;
+
+    const declarations = symbol.getDeclarations();
+    return declarations.some(decl =>
+        Node.isFunctionDeclaration(decl) ||
+        Node.isFunctionExpression(decl) ||
+        Node.isArrowFunction(decl) ||
+        Node.isMethodDeclaration(decl) ||
+        Node.isMethodSignature(decl)
+    );
 }
