@@ -1,28 +1,8 @@
-import {expose} from './demo'
-
-export let ac = 123;
-
-export function test(x: number | string) {
-    if (typeof x === 'string') {
-        console.log(x)
-    } else {
-        console.log(x + 1)
-    }
+/*for (let i = 0; i < 5; i++) {
+    console.log(i);
 }
-
-type As = { a: number, foo(x: number): string; b: number };
-
-function getAs(): As {
-    return {
-        a: 2,
-        b: 1,
-        foo(x: number) {
-            return "222"
-        }
-    }
-}
-
-const x: As = getAs()
-const a = "1";
-console.log(expose())
-//export default test;
+const add = function(a:number, b:number) {
+    return 1+2;
+};*/
+// 箭头函数
+const multiply = (a:number, b:number) => a * b;

@@ -3,7 +3,7 @@ import {
     BinaryExpression,
     Block,
     CallExpression, ExportAssignment,
-    Expression, ExpressionStatement,
+    Expression, ExpressionStatement, ForStatement,
     FunctionDeclaration,
     FunctionExpression,
     Identifier,
@@ -12,15 +12,15 @@ import {
     LeftHandSideExpression, MethodDeclaration,
     Node,
     NumericLiteral, ObjectLiteralElementLike, ObjectLiteralExpression,
-    ParameterDeclaration,
+    ParameterDeclaration, PostfixUnaryExpression,
     Project, PropertyAssignment,
     ReturnStatement,
     Statement,
-    StringLiteral,
+    StringLiteral, SyntaxKind,
     ts,
     Type, TypeAliasDeclaration, TypeLiteralNode,
-    TypeOfExpression,
-    VariableDeclarationKind,
+    TypeOfExpression, VariableDeclaration,
+    VariableDeclarationKind, VariableDeclarationList,
     VariableStatement
 } from "ts-morph";
 import fs from 'node:fs'
@@ -217,29 +217,64 @@ function parseIfStatement(node: IfStatement) {
     }
 }
 
+function parseForStatement(node: ForStatement) {
+    const isSourceFileChild = Node.isSourceFile(node.getParent())
+    const initializer = node.getInitializer();
+    const condition = node.getCondition();
+    const incrementor = node.getIncrementor();
+    const statement = node.getStatement();
+    const exp = initializer ? parseNode(initializer) : {code: ""};
+    const c = parseExpression(condition)
+    const i = parseExpression(incrementor)
+    const s = parseStatement(statement);
+    let result = `for ${exp.code}; ${c.code}; ${i.code} ${s.code}`
+    if (isSourceFileChild) {
+        const name = `__iife${expId++}`;
+        result = `func ${name}() ts.Undefined {\n\t${result.split('\n').join(`\n\t`)}\n\treturn ts.Undefined{}\n}\nvar __exp${expId++} = ${name}()\n`
+    }
+    return {
+        code: `${result}`
+    }
+}
 
-function parseVariableStatement(node: VariableStatement) {
-    const isExport = node.hasModifier(ts.SyntaxKind.ExportKeyword)
-    const dl = node.getDeclarationList();
-    // 获取变量的声明类型：let、const 或 var
+function parseVariableDeclarationList(node: VariableDeclarationList) {
+    const parent = node.getParent();
+    let isExport = false
+    if (Node.isVariableStatement(parent)) {
+        isExport = parent.hasModifier(ts.SyntaxKind.ExportKeyword)
+    }
+    const parentIsForStatement = Node.isForStatement(parent);
     const kind = node.getDeclarationKind();
-    let res = `${parseDeclarationKind(kind)}`;
-    const list = dl.getDeclarations();
-    res += list.map(item => {
-        const name = item.getName();
-        const type = item.getType();
-        const initializer = item.getInitializer();
-        let _type = ''
-        if (type) {
-            _type += parseType(type)
-        } else if (initializer) {
-            _type += parseType(initializer?.getType())
-        }
-        return ` ${isExport ? 'G_' : ''}${name} ${_type}${initializer ? ` = ${parseExpression(initializer).code}` : ''}`
-    }).join(',')
-    res += ';'
+    let varStr = `${parseDeclarationKind(kind)}`;
+    const list = node.getDeclarations();
+    let res = list.map(item => {
+        return `${parentIsForStatement ? "" : `${varStr} `}${isExport ? 'G_' : ''}${parseVariableDeclaration(item).code}`
+    }).join('\n')
+    res += ''
     return {
         code: res
+    }
+}
+
+function parseVariableDeclaration(node: VariableDeclaration) {
+    const superIsForStatement = Node.isForStatement(node.getParent().getParent());
+    const name = node.getName();
+    const type = node.getType();
+    const initializer = node.getInitializer();
+    let _type = ''
+    if (type) {
+        _type += parseType(type)
+    } else if (initializer) {
+        _type += parseType(initializer?.getType())
+    }
+    return {
+        code: `${name} ${superIsForStatement ? ":" : " "}${superIsForStatement ? "" : `${_type} `}${initializer ? `= ${parseExpression(initializer).code}` : ''}`
+    }
+}
+
+function parseVariableStatement(node: VariableStatement) {
+    return {
+        code: parseVariableDeclarationList(node.getDeclarationList()).code
     }
 }
 
@@ -262,7 +297,7 @@ function parseIdentifier(id: Identifier) {
     const isAny = refType ? parseType(refType) === 'ts.Any' : false;
     // 普通变量/属性：非全局需要加 .(Type) 类型断言
     const typeAssertion = isGlobal || (!isAny) ? "" : `.(${parseType(id.getType())})`
-    const isImport =  !!getCurrentEntryVars(id, id.getText());
+    const isImport = !!getCurrentEntryVars(id, id.getText());
     return {
         code: `${globalStr}${isExport || isGlobal || isImport ? "G_" : ""}${id.getText()}${typeAssertion}`
     }
@@ -283,6 +318,7 @@ function parseNumericLiteral(node: NumericLiteral) {
 function parseOperatorToken(op: Node<ts.BinaryOperatorToken>, left: string, right: string): CodeResult {
     const text = op.getText();           // 原始 token 文本，例如 "===", "+", "??"
     const kind = op.getKind();
+
     // 绝大多数运算符 Go 和 TS 完全一样，直接原样输出
     const directMap = new Map<ts.SyntaxKind, string>([
         [ts.SyntaxKind.PlusToken, "+"],
@@ -335,13 +371,10 @@ function parseOperatorToken(op: Node<ts.BinaryOperatorToken>, left: string, righ
 function parseBinaryExpression(expression: BinaryExpression) {
     const left = parseExpression(expression.getLeft());
     const right = parseExpression(expression.getRight());
-    const op = expression.getOperatorToken()
+    const op = expression.getOperatorToken();
     return {
         code: parseOperatorToken(op, left.code, right.code).code
     }
-    /*return {
-        code: `${left.code} ${} ${right.code}`
-    }*/
 }
 
 function isFunctionLike(node: Node) {
@@ -358,6 +391,7 @@ function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDe
     if (!Node.isArrowFunction(node)) {
         name = node.getName() || "";
     }
+
     if (Node.isMethodDeclaration(node)) {
         return {
             code: `G_${name}: func (${args}) ${returnType} ${body.code}`
@@ -388,8 +422,19 @@ function parseExpression(expression?: Expression): CodeResult {
         return parseCallExpression(expression);
     } else if (Node.isObjectLiteralExpression(expression)) {
         return parseObjectLiteralExpression(expression)
+    } else if (Node.isPostfixUnaryExpression(expression)) {
+        return parsePostfixUnaryExpression(expression)
+    } else if (Node.isFunctionExpression(expression)) {
+        return parseFunctionLike(expression);
     }
     return {code: ''}
+}
+
+function parsePostfixUnaryExpression(exp: PostfixUnaryExpression) {
+    const left = exp.getOperand();
+    const leftResult = parseLeftHandSideExpression(left)
+    const token = exp.getOperatorToken();
+    return {code: `${leftResult.code}${token === SyntaxKind.PlusPlusToken ? "++" : "--"}`}
 }
 
 function parseObjectLiteralExpression(expression: ObjectLiteralExpression) {
@@ -492,6 +537,8 @@ function parseNode(node: Node): CodeResult {
         return parseIdentifier(node)
     } else if (Node.isVariableStatement(node)) {
         return parseVariableStatement(node);  // 检查 statement 是否是导出的
+    } else if (Node.isVariableDeclarationList(node)) {
+        return parseVariableDeclarationList(node)
     } else if (Node.isFunctionDeclaration(node)) {
         return parseFunctionLike(node)
     } else if (Node.isExpressionStatement(node)) {
@@ -502,6 +549,8 @@ function parseNode(node: Node): CodeResult {
         return parseExportAssignment(node)
     } else if (Node.isIfStatement(node)) {
         return parseIfStatement(node)
+    } else if (Node.isForStatement(node)) {
+        return parseForStatement(node)
     } else if (Node.isBlock(node)) {
         return parseBlock(node)
     } else if (Node.isImportDeclaration(node)) {
@@ -577,7 +626,7 @@ function parseReturnTyped(node: ReturnStatement) {
         content = parseExpression(exp).code;
     }
     return {
-        code: `return ${content}`
+        code: `\nreturn ${content}`
     }
 }
 
@@ -617,7 +666,7 @@ function parseBody(body?: Node) {
         // => 表达式形式
         const exprCode = parseNode(body);
         return {
-            code: `return ${exprCode}`
+            code: `{\n\treturn ${exprCode.code}\n}`
         }
     }
     res.code = parseBlock(body).code
@@ -649,7 +698,16 @@ function parseDeclarationKind(kind: VariableDeclarationKind) {
     return kind.toString()
 }
 
-function parseType(type: Type) {
+function parseFunctionType(type: Type) {
+    const symbol = type.getSymbol() || type.getAliasSymbol();
+    if (!symbol) return "ts.Any";
+
+    const declarations = symbol.getDeclarations();
+    const node = declarations[0] as FunctionDeclaration;
+    return `func(${node.getParameters().map(p => parseType(p.getType())).join(', ')}) ${parseType(node.getReturnType())}`
+}
+
+function parseType(type: Type): string {
 
     // 1. 基本类型（优先匹配）
     if (type.isNumber() || type.isNumberLiteral()) return "ts.Number";
@@ -666,7 +724,7 @@ function parseType(type: Type) {
     }
     // 2. 函数类型核心判断（关键！）
     if (isFunctionType(type)) {
-        return "ts.Function";
+        return parseFunctionType(type);
     }
 
     // 3. 联合类型 | 交叉类型 → 都降级成 Any

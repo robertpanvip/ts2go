@@ -416,3 +416,133 @@ func isString(v Any) bool {
     _, ok := v.(String)
     return ok
 }
+
+
+//数组
+
+type Array struct {
+	data []Any
+}
+
+// 创建数组
+func NewArray() *Array {
+	return &Array{data: make([]Any, 0)}
+}
+
+// 长度
+func (a *Array) G_length() int {
+	return len(a.data)
+}
+
+// 获取
+func (a *Array) G_get(i int) Any {
+	return a.data[i]
+}
+
+// 设置
+func (a *Array) G_set(i int, v Any) {
+	a.data[i] = v
+}
+
+// 追加元素（等同于 JS push）
+func (a *Array) G_push(v Any) {
+	a.data = append(a.data, v)
+}
+
+// 删除最后一个元素（JS pop）
+func (a *Array) G_pop() Any {
+	if len(a.data) == 0 {
+		return nil
+	}
+	last := a.data[len(a.data)-1]
+	a.data = a.data[:len(a.data)-1]
+	return last
+}
+
+// 删除第一个元素（JS shift）
+func (a *Array) G_shift() Any {
+	if len(a.data) == 0 {
+		return nil
+	}
+	first := a.data[0]
+	a.data = a.data[1:]
+	return first
+}
+
+// 在头部添加元素（JS unshift）
+func (a *Array) G_unshift(v Any) {
+	a.data = append([]Any{v}, a.data...)
+}
+
+// 删除某个下标（类似 splice(i,1)）
+func (a *Array) G_remove(i int) {
+	if i < 0 || i >= len(a.data) {
+		return
+	}
+	a.data = append(a.data[:i], a.data[i+1:]...)
+}
+
+// JS splice：删除 deleteCount 个元素并插入 items
+func (a *Array) G_splice(start int, deleteCount int, items ...Any) {
+	if start < 0 {
+		start = 0
+	}
+	if start > len(a.data) {
+		start = len(a.data)
+	}
+
+	end := start + deleteCount
+	if end > len(a.data) {
+		end = len(a.data)
+	}
+
+	// 删除中间部分
+	a.data = append(a.data[:start], append(items, a.data[end:]...)...)
+}
+
+// 查找下标
+func (a *Array) G_indexOf(v Any) int {
+	for i, x := range a.data {
+		if x == v {
+			return i
+		}
+	}
+	return -1
+}
+
+// 是否包含
+func (a *Array) G_includes(v Any) bool {
+	return a.IndexOf(v) != -1
+}
+
+// forEach
+func (a *Array) G_forEach(fn func(value Any, index int)) {
+	for i, v := range a.data {
+		fn(v, i)
+	}
+}
+
+// map
+func (a *Array) G_map(fn func(value Any, index int) Any) *Array {
+	res := NewArray()
+	for i, v := range a.data {
+		res.Push(fn(v, i))
+	}
+	return res
+}
+
+// filter
+func (a *Array) G_filter(fn func(value Any, index int) bool) *Array {
+	res := NewArray()
+	for i, v := range a.data {
+		if fn(v, i) {
+			res.Push(v)
+		}
+	}
+	return res
+}
+
+// 暴露内部数组（只读）
+func (a *Array) G_values() []Any {
+	return a.data
+}
