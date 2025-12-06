@@ -1,8 +1,4 @@
-/*for (let i = 0; i < 5; i++) {
-    console.log(i);
-}
-const add = function(a:number, b:number) {
-    return 1+2;
-};*/
-// 箭头函数
-const multiply = (a:number, b:number) => a * b;
+// 数组
+let array = [1, 2, 3, 4, 5];
+
+console.log(array.at(-1))

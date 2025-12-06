@@ -417,132 +417,169 @@ func isString(v Any) bool {
     return ok
 }
 
-
-//数组
-
-type Array struct {
-	data []Any
-}
-
-// 创建数组
-func NewArray() *Array {
-	return &Array{data: make([]Any, 0)}
-}
+// 基础方法：用值接收器
 
 // 长度
-func (a *Array) G_length() int {
-	return len(a.data)
+func (a Array) G_length() Number {
+    return Number(len(a))
 }
 
 // 获取
-func (a *Array) G_get(i int) Any {
-	return a.data[i]
+func (a Array) G_get(i Number) Any {
+    return a[i]
 }
 
 // 设置
-func (a *Array) G_set(i int, v Any) {
-	a.data[i] = v
+func (a Array) G_set(i Number, v Any) Undefined {
+    a[i] = v
+    return Undefined{}
 }
 
-// 追加元素（等同于 JS push）
-func (a *Array) G_push(v Any) {
-	a.data = append(a.data, v)
+// --------------------
+// 需要修改数据的方法：必须用 “指针接收器 + *a”
+// --------------------
+
+func (a *Array) G_push(v Any) Any {
+    *a = append(*a, v)
+    return v
 }
 
-// 删除最后一个元素（JS pop）
 func (a *Array) G_pop() Any {
-	if len(a.data) == 0 {
-		return nil
-	}
-	last := a.data[len(a.data)-1]
-	a.data = a.data[:len(a.data)-1]
-	return last
+    aa := *a
+    if len(aa) == 0 {
+        return nil
+    }
+    last := aa[len(aa)-1]
+    *a = aa[:len(aa)-1]
+    return last
 }
 
-// 删除第一个元素（JS shift）
 func (a *Array) G_shift() Any {
-	if len(a.data) == 0 {
-		return nil
-	}
-	first := a.data[0]
-	a.data = a.data[1:]
-	return first
+    aa := *a
+    if len(aa) == 0 {
+        return nil
+    }
+    first := aa[0]
+    *a = aa[1:]
+    return first
 }
 
-// 在头部添加元素（JS unshift）
-func (a *Array) G_unshift(v Any) {
-	a.data = append([]Any{v}, a.data...)
+func (a *Array) G_unshift(v Any) Any {
+    aa := *a
+    newA := append([]Any{v}, aa...)
+    *a = newA
+    return v;
 }
 
-// 删除某个下标（类似 splice(i,1)）
-func (a *Array) G_remove(i int) {
-	if i < 0 || i >= len(a.data) {
-		return
-	}
-	a.data = append(a.data[:i], a.data[i+1:]...)
+func (a *Array) G_remove(i Number) Undefined {
+    aa := *a
+    if i < 0 || i >= Number(len(aa)) {
+        return Undefined{}
+    }
+    *a = append(aa[:i], aa[i+1:]...)
+    return Undefined{}
 }
 
-// JS splice：删除 deleteCount 个元素并插入 items
-func (a *Array) G_splice(start int, deleteCount int, items ...Any) {
-	if start < 0 {
-		start = 0
-	}
-	if start > len(a.data) {
-		start = len(a.data)
-	}
+// splice
+func (a *Array) G_splice(start Number, deleteCount Number, items ...Any) {
+    aa := *a
 
-	end := start + deleteCount
-	if end > len(a.data) {
-		end = len(a.data)
-	}
+    if start < 0 {
+        start = 0
+    }
+    if start > Number(len(aa)) {
+        start = Number(len(aa))
+    }
 
-	// 删除中间部分
-	a.data = append(a.data[:start], append(items, a.data[end:]...)...)
+    end := start + deleteCount
+    if end > Number(len(aa)) {
+        end = Number(len(aa))
+    }
+
+    newA := append(append(aa[:start], items...), aa[end:]...)
+    *a = newA
 }
 
-// 查找下标
-func (a *Array) G_indexOf(v Any) int {
-	for i, x := range a.data {
-		if x == v {
-			return i
-		}
-	}
-	return -1
+// --------------------
+// 查询类方法：指针接收器 OK，但内部要用 *a
+// --------------------
+
+func (a *Array) G_indexOf(v Any) Number {
+    aa := *a
+    for i, x := range aa {
+        if x == v {
+            return Number(i)
+        }
+    }
+    return -1
 }
 
-// 是否包含
-func (a *Array) G_includes(v Any) bool {
-	return a.IndexOf(v) != -1
+func (a *Array) G_includes(v Any) Boolean {
+    return a.G_indexOf(v) != -1
 }
 
-// forEach
-func (a *Array) G_forEach(fn func(value Any, index int)) {
-	for i, v := range a.data {
-		fn(v, i)
-	}
+// --------------------
+// forEach / map / filter
+// --------------------
+
+func (a *Array) G_forEach(fn func(value Any, index int)) Undefined {
+    aa := *a
+    for i, v := range aa {
+        fn(v, i)
+    }
+   return Undefined{}
 }
 
-// map
 func (a *Array) G_map(fn func(value Any, index int) Any) *Array {
-	res := NewArray()
-	for i, v := range a.data {
-		res.Push(fn(v, i))
-	}
-	return res
+    res := &Array{}
+    aa := *a
+    for i, v := range aa {
+        (*res) = append(*res, fn(v, i))
+    }
+    return res
 }
 
-// filter
 func (a *Array) G_filter(fn func(value Any, index int) bool) *Array {
-	res := NewArray()
-	for i, v := range a.data {
-		if fn(v, i) {
-			res.Push(v)
-		}
-	}
-	return res
+    res := &Array{}
+    aa := *a
+    for i, v := range aa {
+        if fn(v, i) {
+            (*res) = append(*res, v)
+        }
+    }
+    return res
 }
 
-// 暴露内部数组（只读）
-func (a *Array) G_values() []Any {
-	return a.data
+// join 模拟 JS Array.join
+func (a Array) G_join(sep String) String {
+	if len(a) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	for i, v := range a {
+		if i > 0 {
+			sb.WriteString(string(sep)) // 写入分隔符
+		}
+		sb.WriteString(fmt.Sprint(v)) // 把 Any 转成字符串
+	}
+
+	return String(sb.String())
+}
+
+func (a Array) G_at(index Number) Any {
+	n := int(index)
+
+	// 处理负数下标 JS: arr.at(-1) => 最后一个
+	if n < 0 {
+		n = len(a) + n
+	}
+
+	// 越界返回 undefined（你可改成 nil 或自定义 Undefined）
+	if n < 0 || n >= len(a) {
+		return Undefined{}
+	}
+
+	return a[n]
 }

@@ -1,4 +1,5 @@
 import {
+    ArrayLiteralExpression,
     ArrowFunction,
     BinaryExpression,
     Block,
@@ -12,14 +13,14 @@ import {
     LeftHandSideExpression, MethodDeclaration,
     Node,
     NumericLiteral, ObjectLiteralElementLike, ObjectLiteralExpression,
-    ParameterDeclaration, PostfixUnaryExpression,
+    ParameterDeclaration, PostfixUnaryExpression, PrefixUnaryExpression,
     Project, PropertyAssignment,
     ReturnStatement,
     Statement,
     StringLiteral, SyntaxKind,
     ts,
     Type, TypeAliasDeclaration, TypeLiteralNode,
-    TypeOfExpression, VariableDeclaration,
+    TypeOfExpression, UnaryExpression, VariableDeclaration,
     VariableDeclarationKind, VariableDeclarationList,
     VariableStatement
 } from "ts-morph";
@@ -426,8 +427,25 @@ function parseExpression(expression?: Expression): CodeResult {
         return parsePostfixUnaryExpression(expression)
     } else if (Node.isFunctionExpression(expression)) {
         return parseFunctionLike(expression);
+    } else if (Node.isArrayLiteralExpression(expression)) {
+        return parseArrayLiteralExpression(expression)
+    } else if (Node.isUnaryExpression(expression)) {
+        return parseUnaryExpression(expression)
     }
     return {code: ''}
+}
+
+function parseUnaryExpression(expression:UnaryExpression) {
+    if (Node.isPrefixUnaryExpression(expression)) {
+        return parsePrefixUnaryExpression(expression)
+    }
+    return {code: expression.getText()}
+}
+
+function parseArrayLiteralExpression(exp: ArrayLiteralExpression) {
+    const elements = exp.getElements();
+    const res = `ts.Array{${elements.map(ele => parseExpression(ele).code)}}`
+    return {code: res}
 }
 
 function parsePostfixUnaryExpression(exp: PostfixUnaryExpression) {
@@ -562,6 +580,37 @@ function parseNode(node: Node): CodeResult {
     }
     return {
         code: node.getText()
+    }
+}
+
+function parsePrefixUnaryExpression(node: PrefixUnaryExpression) {
+    const operand = parseExpression(node.getOperand());
+    const token = node.getOperatorToken();
+    let code = '';
+    switch (token) {
+        case SyntaxKind.PlusPlusToken:   // ++x
+            code = `++${operand.code}`;
+            break;
+        case SyntaxKind.MinusMinusToken:  // --x
+            code = `--${operand.code}`;
+            break;
+        case SyntaxKind.PlusToken:        // +x
+            code = `+${operand.code}`;
+            break;
+        case SyntaxKind.MinusToken:       // -x
+            code = `-${operand.code}`;
+            break;
+        case SyntaxKind.TildeToken:       // ~x
+            code = `~${operand.code}`;
+            break;
+        case SyntaxKind.ExclamationToken: // !x
+            code = `!${operand.code}`;
+            break;
+        default:
+            throw new Error(`Unsupported prefix unary operator: ${token}`);
+    }
+    return {
+        code
     }
 }
 
@@ -735,7 +784,7 @@ function parseType(type: Type): string {
 
     // 4. 数组类型 number[] 或 Array<string>
     if (type.isArray()) {
-        return "Array"; // 你的 Array 类型
+        return "ts.Array"; // 你的 Array 类型
     }
 
     // 5. 获取底层 symbol（关键！）
