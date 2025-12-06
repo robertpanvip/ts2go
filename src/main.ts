@@ -435,7 +435,7 @@ function parseExpression(expression?: Expression): CodeResult {
     return {code: ''}
 }
 
-function parseUnaryExpression(expression:UnaryExpression) {
+function parseUnaryExpression(expression: UnaryExpression) {
     if (Node.isPrefixUnaryExpression(expression)) {
         return parsePrefixUnaryExpression(expression)
     }
@@ -443,8 +443,11 @@ function parseUnaryExpression(expression:UnaryExpression) {
 }
 
 function parseArrayLiteralExpression(exp: ArrayLiteralExpression) {
+    const type = exp.getType();
     const elements = exp.getElements();
-    const res = `ts.Array{${elements.map(ele => parseExpression(ele).code)}}`
+    const EType = type.getArrayElementType()
+    const eleType = EType ? parseType(EType) : 'ts.Any'
+    const res = `ts.Array[${eleType}]{${elements.map(ele => parseExpression(ele).code)}}`
     return {code: res}
 }
 
@@ -784,7 +787,9 @@ function parseType(type: Type): string {
 
     // 4. 数组类型 number[] 或 Array<string>
     if (type.isArray()) {
-        return "ts.Array"; // 你的 Array 类型
+        const elementType = type.getArrayElementType()!;
+        const eleTypeStr = elementType ? parseType(elementType) : "ts.Any"
+        return `ts.Array[${eleTypeStr}]`; // 你的 Array 类型
     }
 
     // 5. 获取底层 symbol（关键！）
