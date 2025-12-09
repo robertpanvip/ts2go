@@ -1,11 +1,7 @@
 package runtime
 import (
 	"fmt"
-	"math"
-	"strconv"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 )
 // 引用值
 type Array[T any] []T
@@ -120,7 +116,7 @@ func (a *Array[T]) G_forEach(fn func(value T, index Number)) Undefined {
 }
 
 // G_map：T 映射到 U，返回新的 Array[U]
-func (a Array[T]) G_map[U any](fn func(value T, index Number) U) Array[U] {
+/* func (a Array[T]) G_map[U any](fn func(value T, index Number) U) Array[U] {
     // 创建一个 U 类型的切片
     res := make(Array[U], len(a))
 
@@ -132,7 +128,7 @@ func (a Array[T]) G_map[U any](fn func(value T, index Number) U) Array[U] {
 
     // 返回一个新的 Array[U]
     return res
-}
+} */
 
 // Filter
 func (a *Array[T]) G_filter(fn func(value T, index int) bool) *Array[T] {

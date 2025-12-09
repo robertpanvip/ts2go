@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 

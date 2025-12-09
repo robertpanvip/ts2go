@@ -5,8 +5,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 )
 
 // ====================== 基础类型 ======================
