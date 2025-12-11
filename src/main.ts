@@ -3,18 +3,18 @@ import {
     ArrowFunction,
     BinaryExpression,
     Block,
-    CallExpression, ExportAssignment,
+    CallExpression, ClassDeclaration, ClassMemberTypes, ConstructorDeclaration, ExportAssignment,
     Expression, ExpressionStatement, ForStatement,
     FunctionDeclaration,
     FunctionExpression,
     Identifier,
     IfStatement,
     ImportDeclaration,
-    LeftHandSideExpression, MethodDeclaration,
+    LeftHandSideExpression, MethodDeclaration, NewExpression,
     Node,
     NumericLiteral, ObjectLiteralElementLike, ObjectLiteralExpression,
     ParameterDeclaration, PostfixUnaryExpression, PrefixUnaryExpression,
-    Project, PropertyAssignment,
+    Project, PropertyAssignment, PropertyDeclaration,
     ReturnStatement,
     Statement,
     StringLiteral, SyntaxKind,
@@ -34,6 +34,7 @@ const appDirectory = fs.realpathSync(cwd);
 
 type CodeResult = {
     code: string,
+    type?: string
 }
 
 const project = new Project();
@@ -382,7 +383,7 @@ function isFunctionLike(node: Node) {
     return Node.isArrowFunction(node) || Node.isFunctionExpression(node) || Node.isFunctionDeclaration(node);
 }
 
-function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDeclaration | MethodDeclaration): CodeResult {
+function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDeclaration | MethodDeclaration | ConstructorDeclaration): CodeResult {
     const isExport = node.hasModifier(ts.SyntaxKind.ExportKeyword)
     const parameters = node.getParameters();
     const args = parseParameters(parameters).code;
@@ -390,20 +391,26 @@ function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDe
     const returnType = parseType(node.getReturnType());
     let name: string = '';
     if (!Node.isArrowFunction(node)) {
-        name = node.getName() || "";
+        if (Node.isConstructorDeclaration(node)) {
+            name = 'constructor'
+        } else
+            name = node.getName() || "";
     }
 
     if (Node.isMethodDeclaration(node)) {
         return {
-            code: `G_${name}: func (${args}) ${returnType} ${body.code}`
+            code: `G_${name}: func (${args}) ${returnType} ${body.code}`,
+            type: `G_${name} func (${args}) ${returnType}`
         }
     }
     return {
-        code: `func ${isExport ? 'G_' : ''}${name}(${args}) ${returnType} ${body.code}`
+        code: `func ${isExport ? 'G_' : ''}${name}(${args}) ${returnType} ${body.code}`,
+        type: `func ${isExport ? 'G_' : ''}${name}(${args}) ${returnType}`
     }
 }
 
 function parseExpression(expression?: Expression): CodeResult {
+
     if (!expression) {
         return {code: ''}
     }
@@ -435,9 +442,23 @@ function parseExpression(expression?: Expression): CodeResult {
     return {code: ''}
 }
 
+function parseNewExpression(expression: NewExpression): CodeResult {
+    const exp = expression.getExpression();
+    let name: string = '';
+    if (Node.isIdentifier(exp)) {
+        name = parseIdentifier(exp).code
+    }
+    const args = expression.getArguments();
+    const argsStr = args.map(arg => parseNode(arg).code).join(',');
+    return {code: `G_${name}.Constructor(${argsStr})`}
+}
+
 function parseUnaryExpression(expression: UnaryExpression) {
     if (Node.isPrefixUnaryExpression(expression)) {
         return parsePrefixUnaryExpression(expression)
+    }
+    if (Node.isNewExpression(expression)) {
+        return parseNewExpression(expression)
     }
     return {code: expression.getText()}
 }
@@ -580,9 +601,67 @@ function parseNode(node: Node): CodeResult {
         return parseReturnTyped(node)
     } else if (Node.isTypeAliasDeclaration(node)) {
         return parseTypeAliasDeclaration(node)
+    } else if (Node.isClassDeclaration(node)) {
+        return parseClassDeclaration(node)
+    } else if (Node.isParameterDeclaration(node)) {
+        return parseParameterDeclaration(node)
     }
     return {
         code: node.getText()
+    }
+}
+
+function parseParameterDeclaration(node: ParameterDeclaration) {
+    const name = node.getName();
+    let type = node.getType();
+    const initializer = node.getInitializer();
+    //todo
+    if (!type && initializer) {
+        type = initializer.getType();
+    }
+    return {
+        code: `${name} ${parseType(type)}`
+    }
+}
+
+function parsePropertyDeclaration(node: PropertyDeclaration) {
+    const name = node.getName();
+    const initializer = node.getInitializer();
+    const type = node.getType();
+    return {
+        code: `${name}:${parseExpression(initializer).code} `,
+        type: `${name} ${parseType(type)}`
+    }
+}
+
+function parseClassMembers(node: ClassMemberTypes) {
+    if (Node.isPropertyDeclaration(node)) {
+        return parsePropertyDeclaration(node)
+    } else if (Node.isMethodDeclaration(node)) {
+        const res = parseFunctionLike(node)
+        return {
+            code: res.code.split('\n').join('\n\t'),
+            type: res.type
+        }
+    } else if (Node.isConstructorDeclaration(node)) {
+        return {code: ""}
+    }
+    return {
+        code: node.getText()
+    }
+}
+
+function parseClassDeclaration(node: ClassDeclaration) {
+    const className = node.getName();
+    const members = node.getMembers();
+    const contentTypes = members.map(m => parseClassMembers(m).type).join('\n\t')
+    const content = members.map(m => parseClassMembers(m).code).join('\n\t')
+    const name = `G_${className}`;
+    const cn = members.find(m => Node.isConstructorDeclaration(m))
+    const args = cn?.getParameters() || [];
+    const argStr = args.map(arg => parseNode(arg).code).join(',')
+    return {
+        code: `type struct ${name}{\n\t${contentTypes}\n}\n\nfunc (g *${name}) Constructor(${argStr}) {\n\t${cn ? parseBody(cn.getBody()).code : ""}return struct{\n\t${content}}\n}`
     }
 }
 
