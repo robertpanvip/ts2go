@@ -284,9 +284,15 @@ function parseIdentifier(id: Identifier) {
     const df = id.getSymbol()?.getDeclarations()[0];
     const vs = df?.getParent()?.getParent();
     let isExport = false;
-    if (vs && Node.isVariableStatement(vs)) {
-        isExport = vs.hasModifier(ts.SyntaxKind.ExportKeyword)
+    if (vs) {
+        if (Node.isVariableStatement(vs)) {
+            isExport = vs.hasModifier(ts.SyntaxKind.ExportKeyword)
+        }
     }
+    if(Node.isClassDeclaration(df)){
+        isExport = df.hasModifier(ts.SyntaxKind.ExportKeyword)
+    }
+
     const isGlobal = isGlobalIdentifier(id);
     const globalStr = isGlobal ? "ts.Global." : ""
     if (df && Node.isFunctionDeclaration(df)) {
@@ -295,11 +301,12 @@ function parseIdentifier(id: Identifier) {
             code: `${globalStr}${isExport || isGlobal ? "G_" : ""}${id.getText()}`
         }
     }
-    const refType = id.getSymbol()?.getDeclarations()[0].getType()
+    const refType = df?.getType();
     const isAny = refType ? parseType(refType) === 'ts.Any' : false;
     // 普通变量/属性：非全局需要加 .(Type) 类型断言
     const typeAssertion = isGlobal || (!isAny) ? "" : `.(${parseType(id.getType())})`
     const isImport = !!getCurrentEntryVars(id, id.getText());
+
     return {
         code: `${globalStr}${isExport || isGlobal || isImport ? "G_" : ""}${id.getText()}${typeAssertion}`
     }
@@ -380,7 +387,7 @@ function parseBinaryExpression(expression: BinaryExpression) {
 }
 
 function isFunctionLike(node: Node) {
-    return Node.isArrowFunction(node) || Node.isFunctionExpression(node) || Node.isFunctionDeclaration(node);
+    return Node.isArrowFunction(node) || Node.isFunctionExpression(node) || Node.isFunctionDeclaration(node) || Node.isMethodDeclaration(node);
 }
 
 function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDeclaration | MethodDeclaration | ConstructorDeclaration): CodeResult {
@@ -393,13 +400,14 @@ function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDe
     if (!Node.isArrowFunction(node)) {
         if (Node.isConstructorDeclaration(node)) {
             name = 'constructor'
-        } else
+        } else {
             name = node.getName() || "";
+        }
     }
 
     if (Node.isMethodDeclaration(node)) {
         return {
-            code: `G_${name}: func (${args}) ${returnType} ${body.code}`,
+            code: `G_${name}= func (${args}) ${returnType} ${body.code}`,
             type: `G_${name} func (${args}) ${returnType}`
         }
     }
@@ -450,7 +458,7 @@ function parseNewExpression(expression: NewExpression): CodeResult {
     }
     const args = expression.getArguments();
     const argsStr = args.map(arg => parseNode(arg).code).join(',');
-    return {code: `G_${name}.Constructor(${argsStr})`}
+    return {code: `new(${name}).Constructor(${argsStr})`}
 }
 
 function parseUnaryExpression(expression: UnaryExpression) {
@@ -652,16 +660,26 @@ function parseClassMembers(node: ClassMemberTypes) {
 }
 
 function parseClassDeclaration(node: ClassDeclaration) {
-    const className = node.getName();
+    const name = parseIdentifier(node.getNameNode()!).code
     const members = node.getMembers();
     const contentTypes = members.map(m => parseClassMembers(m).type).join('\n\t')
-    const content = members.map(m => parseClassMembers(m).code).join('\n\t')
-    const name = `G_${className}`;
+    const variable: string[] = [];
+    const fn: string[] = []
+    members.flatMap(m => {
+        const val = parseClassMembers(m).code;
+        if (Node.isPropertyDeclaration(m)) {
+            variable.push(val)
+        }
+        if (Node.isMethodDeclaration(m)) {
+            fn.push(val)
+        }
+        return val ? [val] : []
+    }).join(',\n\t')
     const cn = members.find(m => Node.isConstructorDeclaration(m))
     const args = cn?.getParameters() || [];
     const argStr = args.map(arg => parseNode(arg).code).join(',')
     return {
-        code: `type struct ${name}{\n\t${contentTypes}\n}\n\nfunc (g *${name}) Constructor(${argStr}) {\n\t${cn ? parseBody(cn.getBody()).code : ""}return struct{\n\t${content}}\n}`
+        code: `type ${name} struct {\n\t${contentTypes}\n}\n\nfunc (g *${name}) Constructor(${argStr}) *${name} {\n\t${cn ? parseBody(cn.getBody()).code : ""}\n this:=&${name}{\n\t${variable.join(',\n\t')},\n} \n${fn.map(f => `this.${f}`).join('\n')}\n return this\n}`
     }
 }
 
@@ -895,19 +913,19 @@ function parseType(type: Type): string {
         const typeName = decl.getName();
 
         // 推荐：你给每个 type 别名生成一个 struct
-        return `&${typeName}{}`; // 或直接返回 typeName 包名
+        return `*${typeName}`; // 或直接返回 typeName 包名
     }
 
     // 7.2 接口 interface Person { name: string }
     if (Node.isInterfaceDeclaration(decl)) {
         const interfaceName = decl.getName();
-        return `&${interfaceName}{}`;
+        return `*${interfaceName}`;
     }
 
     // 7.3 类 class Animal { name: string }
     if (Node.isClassDeclaration(decl)) {
         const className = decl.getName() || "AnonymousClass";
-        return `&${className}{}`;
+        return `*${className}`;
     }
 
     // 7.4 枚举 enum Color { Red, Green }

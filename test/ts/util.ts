@@ -3,8 +3,9 @@ class A{
     constructor(a:number){
     console.log(a)
     }
-    method(arg:number):void{
+    method(arg:number){
         console.log(this.fieldA);
     }
 }
 const a = new A(456);
+a.method(2222)
