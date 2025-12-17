@@ -53,9 +53,7 @@ func G_typeof(x Any) String {
      G_isNaN      Function
      G_isFinite   Function
 
-     G_console struct {
-         G_log Function
-     }
+     G_console *ConsoleConstructor
  }{
      G_NaN:      Number(math.NaN()),
      G_Infinity: Number(math.Inf(1)),
@@ -108,18 +106,7 @@ func G_typeof(x Any) String {
      },
 
      // console.log(...args)
-     G_console: struct {
-         G_log Function
-     }{
-         G_log: func( args ...Any) Any {
-             parts := make([]string, len(args))
-             for i, a := range args {
-                 parts[i] = string(G_toString(a))
-             }
-             fmt.Println(strings.Join(parts, " "))
-             return nil
-         },
-     },
+     G_console: Console,
  }
 
 // ====================== 强制转换函数（也加 G_）======================

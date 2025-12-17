@@ -10,7 +10,7 @@ import {
     Identifier,
     IfStatement,
     ImportDeclaration,
-    LeftHandSideExpression, MethodDeclaration, NewExpression,
+    LeftHandSideExpression, MethodDeclaration, NewExpression,PropertyAccessExpression,
     Node,
     NumericLiteral, ObjectLiteralElementLike, ObjectLiteralExpression,
     ParameterDeclaration, PostfixUnaryExpression, PrefixUnaryExpression,
@@ -26,7 +26,7 @@ import {
 } from "ts-morph";
 import fs from 'node:fs'
 import * as path from "node:path";
-import {hasReturn, isFunctionType} from "./helper";
+import {hasReturn, isFunctionType, isUppercaseStart} from "./helper";
 
 const cwd = process.cwd();
 
@@ -281,16 +281,21 @@ function parseVariableStatement(node: VariableStatement) {
 }
 
 function parseIdentifier(id: Identifier) {
-    const df = id.getSymbol()?.getDeclarations()[0];
+    const symbol = id.getSymbol();
+    const df = symbol?.getDeclarations()[0];
     const vs = df?.getParent()?.getParent();
     let isExport = false;
+    let isPrivate = false;
     if (vs) {
         if (Node.isVariableStatement(vs)) {
             isExport = vs.hasModifier(ts.SyntaxKind.ExportKeyword)
         }
     }
-    if(Node.isClassDeclaration(df)){
-        isExport = df.hasModifier(ts.SyntaxKind.ExportKeyword)
+    if (Node.isClassDeclaration(df)) {
+        isExport = df.hasModifier(ts.SyntaxKind.ExportKeyword);
+    } else if (Node.isPropertyDeclaration(df)) {
+        isPrivate = df.hasModifier(ts.SyntaxKind.PrivateKeyword);
+        isExport = !df.hasModifier(ts.SyntaxKind.PrivateKeyword)
     }
 
     const isGlobal = isGlobalIdentifier(id);
@@ -306,9 +311,15 @@ function parseIdentifier(id: Identifier) {
     // 普通变量/属性：非全局需要加 .(Type) 类型断言
     const typeAssertion = isGlobal || (!isAny) ? "" : `.(${parseType(id.getType())})`
     const isImport = !!getCurrentEntryVars(id, id.getText());
-
+    const name = id.getText()
+    let prefix = "";
+    if (isPrivate) {
+        prefix = isUppercaseStart(name) ? 'g_' : "";
+    } else if (isExport || isGlobal || isImport) {
+        prefix = "G_"
+    }
     return {
-        code: `${globalStr}${isExport || isGlobal || isImport ? "G_" : ""}${id.getText()}${typeAssertion}`
+        code: `${globalStr}${prefix}${name}${typeAssertion}`
     }
 }
 
@@ -416,7 +427,13 @@ function parseFunctionLike(node: ArrowFunction | FunctionExpression | FunctionDe
         type: `func ${isExport ? 'G_' : ''}${name}(${args}) ${returnType}`
     }
 }
-
+function parsePropertyAccessExpression(expression: PropertyAccessExpression) {
+    const exp = expression.getExpression();
+    const name = parseIdentifier(expression.getNameNode()).code;
+    return {
+        code:`${parseLeftHandSideExpression(exp).code}.${name}`
+    }
+}
 function parseExpression(expression?: Expression): CodeResult {
 
     if (!expression) {
@@ -424,6 +441,8 @@ function parseExpression(expression?: Expression): CodeResult {
     }
     if (Node.isIdentifier(expression)) {
         return parseIdentifier(expression)
+    }else if(Node.isPropertyAccessExpression(expression)){
+        return parsePropertyAccessExpression(expression)
     } else if (Node.isNumericLiteral(expression)) {
         return parseNumericLiteral(expression);
     } else if (Node.isTypeOfExpression(expression)) {
@@ -633,7 +652,9 @@ function parseParameterDeclaration(node: ParameterDeclaration) {
 }
 
 function parsePropertyDeclaration(node: PropertyDeclaration) {
-    const name = node.getName();
+
+    const name = parseIdentifier(node.getNameNode() as Identifier).code;
+    //console.log(node.getNameNode().getText(),name);
     const initializer = node.getInitializer();
     const type = node.getType();
     return {

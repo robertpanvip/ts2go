@@ -72,3 +72,5 @@ export function isFunctionType(type: Type): boolean {
         Node.isMethodSignature(decl)
     );
 }
+
+export const isUppercaseStart = (s: string) => /^[A-Z]/.test(s);

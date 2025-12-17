@@ -1,7 +1,7 @@
 package util
 import ts "github.com/robertpanvip/ts2go/core"
 type A struct {
-	fieldA ts.Number
+	G_fieldA ts.Number
 	
 	G_method func (arg ts.Number) ts.Undefined
 }
@@ -11,10 +11,10 @@ func (g *A) Constructor(a ts.Number) *A {
 	ts.Global.G_console.G_log(a)
 }
  this:=&A{
-	fieldA:ts.Number(123) ,
+	G_fieldA:ts.Number(123) ,
 } 
 this.G_method= func (arg ts.Number) ts.Undefined {
-		ts.Global.G_console.G_log(this.fieldA)
+		ts.Global.G_console.G_log(this.G_fieldA)
 		return ts.Undefined{}
 	}
  return this
